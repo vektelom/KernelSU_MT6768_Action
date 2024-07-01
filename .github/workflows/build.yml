@@ -1,0 +1,55 @@
+name: Build kernel with KernelSU support for Redmi 9 (lancelot)
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build kernel with KernelSU support for Redmi 9 (lancelot)
+    runs-on: ubuntu-latest
+    steps:
+    - name: Prepare build environment
+      run: |
+        echo "BUILD_TIME=$(date "+%d-%B-%Y")" >> $GITHUB_ENV
+        sudo apt update
+        sudo apt install git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng maven libssl-dev pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl libxml-simple-perl bc libc6-dev-i386 lib32ncurses5-dev libx11-dev lib32z-dev libgl1-mesa-dev xsltproc unzip device-tree-compiler python2 python3
+        mkdir -p $GITHUB_WORKSPACE
+
+    - name: Clone Proton Clang
+      run: |
+        cd $GITHUB_WORKSPACE
+        git clone https://github.com/kdrag0n/proton-clang --depth=1
+
+    - name: Clone kernel tree
+      run: |
+        cd $GITHUB_WORKSPACE
+        git clone https://github.com/vektelom/android_kernel_xiaomi_mt6768 --depth=1
+
+    - name: Patch KernelSU support
+      run: |
+        cd $GITHUB_WORKSPACE/android_kernel_xiaomi_mt6768
+        curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v0.9.5
+        wget -P $GITHUB_WORKSPACE https://raw.githubusercontent.com/xiaoleGun/KernelSU_Action/main/patches/patches.sh
+        bash $GITHUB_WORKSPACE/patches.sh
+        echo "CONFIG_KSU=y" >> arch/arm64/configs/lancelot_defconfig
+        echo "CONFIG_OVERLAY_FS=y" >> arch/arm64/configs/lancelot_defconfig
+
+    - name: Build kernel
+      run: |
+        cd $GITHUB_WORKSPACE/android_kernel_xiaomi_mt6768
+        export PATH=$GITHUB_WORKSPACE/proton-clang/bin:$PATH
+        make -j$(nproc --all) CC=clang O=out ARCH=arm64 LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- lancelot_defconfig
+        make -j$(nproc --all) CC=clang O=out ARCH=arm64 LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+
+    - name: Create flashable zip
+      run: |
+        cd $GITHUB_WORKSPACE
+        git clone https://github.com/osm0sis/AnyKernel3 --depth=1
+        sed -i 's/kernel.string=ExampleKernel by osm0sis @ xda-developers/kernel.string=Kernel with KernelSU support for Redmi 9 (lancelot) by vektelom/g; s/do.devicecheck=1/do.devicecheck=0/g; s/BLOCK=\/dev\/block\/platform\/omap\/omap_hsmmc.0\/by-name\/boot;/BLOCK=\/dev\/block\/by-name\/boot;/g' AnyKernel3/anykernel.sh
+        cp android_kernel_xiaomi_mt6768/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
+        rm -rf AnyKernel3/.git* AnyKernel3/README.md
+
+    - name: Upload flashable zip
+      uses: actions/upload-artifact@v4
+      with:
+        name: KernelSU-${{ env.BUILD_TIME }}-lancelot
+        path: AnyKernel3/*
